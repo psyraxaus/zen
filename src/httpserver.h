@@ -115,6 +115,7 @@ public:
      * main thread, do not call any other HTTPRequest methods after calling this.
      */
     virtual void WriteReply(int nStatus, const std::string& strReply = "");
+    virtual void WriteReplyImmediate(int nStatus, const std::string& strReply = "");
 };
 
 /** Event handler closure.

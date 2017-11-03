@@ -250,16 +250,6 @@ static std::string RequestMethodString(HTTPRequest::RequestMethod m)
 /** HTTP request callback */
 static void http_request_cb(struct evhttp_request* req, void* arg)
 {
-    // Disable reading to work around a libevent bug, fixed in 2.2.0.
-    if (event_get_version_number() >= 0x02010600 && event_get_version_number() < 0x02020001) {
-        evhttp_connection* conn = evhttp_request_get_connection(req);
-        if (conn) {
-            bufferevent* bev = evhttp_connection_get_bufferevent(conn);
-            if (bev) {
-                bufferevent_disable(bev, EV_READ);
-            }
-        }
-    }
     std::unique_ptr<HTTPRequest> hreq(new HTTPRequest(req));
 
     LogPrint("http", "Received a %s request for %s from %s\n",
@@ -267,13 +257,13 @@ static void http_request_cb(struct evhttp_request* req, void* arg)
 
     // Early address-based allow check
     if (!ClientAllowed(hreq->GetPeer())) {
-        hreq->WriteReply(HTTP_FORBIDDEN);
+        hreq->WriteReplyImmediate(HTTP_FORBIDDEN);
         return;
     }
 
     // Early reject unknown HTTP methods
     if (hreq->GetRequestMethod() == HTTPRequest::UNKNOWN) {
-        hreq->WriteReply(HTTP_BADMETHOD);
+        hreq->WriteReplyImmediate(HTTP_BADMETHOD);
         return;
     }
 
@@ -298,12 +288,24 @@ static void http_request_cb(struct evhttp_request* req, void* arg)
     if (i != iend) {
         std::unique_ptr<HTTPWorkItem> item(new HTTPWorkItem(hreq.release(), path, i->handler));
         assert(workQueue);
-        if (workQueue->Enqueue(item.get()))
+        if (workQueue->Enqueue(item.get())) {
+            // Disable reading to work around a libevent bug, fixed in 2.2.0.
+            if (event_get_version_number() >= 0x02010600 && event_get_version_number() < 0x02020001) {
+                evhttp_connection* conn = evhttp_request_get_connection(req);
+                if (conn) {
+                    bufferevent* bev = evhttp_connection_get_bufferevent(conn);
+                    if (bev) {
+                        bufferevent_disable(bev, EV_READ);
+                    }
+                }
+            }
             item.release(); /* if true, queue took ownership */
-        else
-            item->req->WriteReply(HTTP_INTERNAL, "Work queue depth exceeded");
+        } else {
+            LogPrintf("WARNING: request rejected because http work queue depth exceeded, it can be increased with the -rpcworkqueue= setting\n");
+            item->req->WriteReplyImmediate(HTTP_INTERNAL, "Work queue depth exceeded");
+        }
     } else {
-        hreq->WriteReply(HTTP_NOTFOUND);
+        hreq->WriteReplyImmediate(HTTP_NOTFOUND);
     }
 }
 
@@ -629,6 +631,17 @@ void HTTPRequest::WriteReply(int nStatus, const std::string& strReply)
     ev->trigger(nullptr);
     replySent = true;
     req = 0; // transferred back to main thread
+}
+
+void HTTPRequest::WriteReplyImmediate(int nStatus, const std::string& strReply)
+{
+    assert(!replySent && req);
+    struct evbuffer* evb = evhttp_request_get_output_buffer(req);
+    assert(evb);
+    evbuffer_add(evb, strReply.data(), strReply.size());
+    evhttp_send_reply(req, nStatus, nullptr, nullptr);
+    replySent = true;
+    req = nullptr;
 }
 
 CService HTTPRequest::GetPeer()
