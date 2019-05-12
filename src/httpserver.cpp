@@ -114,9 +114,11 @@ public:
     {
         boost::unique_lock<boost::mutex> lock(cs);
         if (queue.size() >= maxDepth) {
+            LogPrint("http", "Exceeded Queue Depth: %s, Max Depth: %s \n", queue.size(), maxDepth);
             return false;
         }
         queue.push_back(item);
+        LogPrint("http", "Item Queued, Queue Depth: %s, Max Depth: %s \n", queue.size(), maxDepth);
         cond.notify_one();
         return true;
     }

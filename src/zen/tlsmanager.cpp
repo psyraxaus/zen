@@ -419,8 +419,11 @@ int TLSManager::threadSocketHandler(CNode* pnode, fd_set& fdsetRecv, fd_set& fds
     //
     if (sendSet) {
         TRY_LOCK(pnode->cs_vSend, lockSend);
-        if (lockSend)
+        if (lockSend) {
             SocketSendData(pnode);
+        } else {
+            LogPrintf("Unable to achieve Send Lock, aborting");
+        }
     }
     return 0;
 }
